@@ -15,7 +15,9 @@ Academic networking project implementing a command-line overlay node in C. Each 
 
 ## Build
 
-Requirements: GCC and `make` on a Unix-like system.
+Requirements: GCC and GNU `make` on Linux. The supplied Makefile uses
+`hostname -I` for its convenience run targets; on another operating system,
+run the executable directly with the node IP and TCP port.
 
 ```bash
 make
@@ -42,11 +44,11 @@ An end-to-end overlay session requires a compatible registration service and mul
 | File | Responsibility |
 | --- | --- |
 | `main.c` | Process setup and `select()` event loop |
-| `cmd.c` | Command parsing and user-facing node operations |
+| `cmd.c` | Overlay commands and node operations: join, leave, edges, announce and chat |
 | `connect.c` | TCP and UDP connection setup and message exchange |
 | `routing.c` | Route processing and topology-change coordination |
-| `utils.c` | Argument parsing, CLI dispatch and auxiliary functions |
-| `structs.h`, `lib.h` | Shared data structures and constants |
+| `utils.c` | Argument parsing, keyboard command dispatch and message/routing utilities |
+| `structs.h`, `lib.h` | Shared data structures, includes and function declarations |
 
 ## Verification performed for this portfolio version
 
