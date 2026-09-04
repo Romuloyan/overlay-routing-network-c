@@ -76,9 +76,8 @@ void limpar_conexao(NodeState *node) {
         leave(node); // Deixa a rede, se estiver registado
     }
     while (node->num_neighbors > 0) {
-        for(int i = 0; i < node->num_neighbors; i++) {
-            remover_vizinho(node, node->neighbors[i].id); // Limpa os vizinhos, se houver algum
-        }}
+        remover_vizinho(node, node->neighbors[0].id); // Limpa os vizinhos, se houver algum
+    }
     if (node->net.tcp_server_fd > 0) {
         close(node->net.tcp_server_fd);}
 
@@ -98,21 +97,31 @@ void limpar_conexao(NodeState *node) {
  * - service: Porto de destino.
  * - fd: Ponteiro para o descritor.
  * - res: Ponteiro para a estrutura de endereço.
- * Retorno: void
+ * Retorno: 0 em caso de sucesso, -1 em caso de erro.
  * ------------------------------------------------------------------------- */
-void configurar_conexao_tcp_cliente(const char *node, const char *service, int *fd, struct addrinfo **res) {
+int configurar_conexao_tcp_cliente(const char *node, const char *service, int *fd, struct addrinfo **res) {
     struct addrinfo hints;
-    int n; 
+    int n;
 
+    *res = NULL;
     *fd = socket(AF_INET, SOCK_STREAM, 0); // TCP socket
-    if(*fd == -1) exit(1); // error
+    if(*fd == -1) {
+        perror("[Erro] Não foi possível criar socket TCP");
+        return -1;
+    }
 
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_INET;       // IPv4
     hints.ai_socktype = SOCK_STREAM; // TCP socket
 
     n = getaddrinfo(node, service, &hints, res);
-    if(n != 0) /*error*/ exit(1);
+    if(n != 0) {
+        fprintf(stderr, "[Erro] Endereço TCP inválido: %s\n", gai_strerror(n));
+        close(*fd);
+        *fd = -1;
+        return -1;
+    }
+    return 0;
 }
 /* -------------------------------------------------------------------------
  * FUNÇÃO: conectar_tcp
@@ -221,7 +230,11 @@ int neighbor_edge_create(NodeState *node) {
     struct addrinfo *res;
     
     //  Configura e liga (usa as tuas funções de cliente TCP)
-    configurar_conexao_tcp_cliente(node->neighbors[node->num_neighbors].ip, node->neighbors[node->num_neighbors].port, &sock_fd, &res);
+    if (configurar_conexao_tcp_cliente(node->neighbors[node->num_neighbors].ip,
+                                       node->neighbors[node->num_neighbors].port,
+                                       &sock_fd, &res) != 0) {
+        return -1;
+    }
     
     
     struct timeval timeout;

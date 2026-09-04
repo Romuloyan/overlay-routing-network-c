@@ -9,6 +9,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <sys/select.h>
 #include "structs.h"
 #include "cmd.h"

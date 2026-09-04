@@ -68,7 +68,7 @@ int main(int argc, char *argv[] ) {
 
         /*Teclado*/
         if(FD_ISSET(STDIN_FILENO, &read_fds)){
-            if(teclado(&node, regInfo) ==1) {
+            if(teclado(&node) ==1) {
                 break; // Se a função teclado retornar 1, significa que o comando "exit" foi executado e devemos sair do loop
             }
         }

@@ -14,10 +14,18 @@ void processar_Route(NodeState *node, char *buffer, int vizinho_index) {
     char dest_str[4];
     int n;
 
+    if (vizinho_index < 0 || vizinho_index >= node->num_neighbors) {
+        return;
+    }
+
     // 1. Parse the incoming ROUTE message: "ROUTE dest n"
-    if (sscanf(buffer, "ROUTE %s %d", dest_str, &n) == 2) {
-        int t = atoi(dest_str); // O destino (t)
-        int j = atoi(node->neighbors[vizinho_index].id); // O vizinho que enviou a mensagem (j)
+    int t;
+    if (sscanf(buffer, "ROUTE %3s %d", dest_str, &n) == 2 &&
+        parse_node_id(dest_str, &t) && n >= 0 && n <= INF) {
+        int j;
+        if (!parse_node_id(node->neighbors[vizinho_index].id, &j)) {
+            return;
+        }
         printf("[Encaminhamento] Recebido ROUTE para %d com distância %d do vizinho %s\n", 
                t, n, node->neighbors[vizinho_index].id);
 
@@ -58,13 +66,16 @@ void processar_Route(NodeState *node, char *buffer, int vizinho_index) {
  * difunde o alarme (COORD) aos restantes vizinhos ativos.
  * Argumentos: 
  * - node: Estado global do nó.
- * - buffer: Não utilizado neste contexto (NULL).
  * - vizinho_index: Índice do vizinho que foi desconectado na tabela local.
  * Retorno: void
  * ------------------------------------------------------------------------- */
-void coordenation_sender(NodeState *node, char *buffer, int vizinho_index) {
+void coordenation_sender(NodeState *node, int vizinho_index) {
     // 1. Extrair o ID real do vizinho para podermos comparar com a tabela
-    int id_removido = atoi(node->neighbors[vizinho_index].id);
+    int id_removido;
+    if (vizinho_index < 0 || vizinho_index >= node->num_neighbors ||
+        !parse_node_id(node->neighbors[vizinho_index].id, &id_removido)) {
+        return;
+    }
     
     for( int i = 0; i < MAX_NODES; i++){
         if(node->routing_table.succ[i] == id_removido) {
@@ -79,7 +90,10 @@ void coordenation_sender(NodeState *node, char *buffer, int vizinho_index) {
         
             for (int k = 0; k < node->num_neighbors; k++) {
                 if (k != vizinho_index) { // Não envia de volta para o vizinho que detectou a falha
-                    int viz_restante = atoi(node->neighbors[k].id); 
+                    int viz_restante;
+                    if (!parse_node_id(node->neighbors[k].id, &viz_restante)) {
+                        continue;
+                    }
                     enviar_mensagem_tcp(node->neighbors[k].fd, msg_coord);
                     if(node->monitor == 1) {
                         printf("[Monitor] Enviado para o vizinho %s para o destino %02d a mensagem: %s\n", node->neighbors[k].id, i, msg_coord);
@@ -109,11 +123,18 @@ void coordenation_sender(NodeState *node, char *buffer, int vizinho_index) {
  * ------------------------------------------------------------------------- */
 void process_Coord(NodeState *node, char *buffer, int vizinho_index) {
     char dest_str[4];
+    if (vizinho_index < 0 || vizinho_index >= node->num_neighbors) {
+        return;
+    }
     
-    if (sscanf(buffer, "COORD %s", dest_str) == 1) {
+    int dest;
+    if (sscanf(buffer, "COORD %3s", dest_str) == 1 &&
+        parse_node_id(dest_str, &dest)) {
         
-        int dest = atoi(dest_str);
-        int j = atoi(node->neighbors[vizinho_index].id); // ID of the neighbor who sent the alarm
+        int j;
+        if (!parse_node_id(node->neighbors[vizinho_index].id, &j)) {
+            return;
+        }
         if(node->monitor == 1) {
             
             printf("Mensagem TCP recebida de %s: %s\n", node->neighbors[vizinho_index].id, buffer);
@@ -166,7 +187,10 @@ void process_Coord(NodeState *node, char *buffer, int vizinho_index) {
             snprintf(msg_coord, sizeof(msg_coord), "COORD %02d\n", dest);
             
             for (int k = 0; k < node->num_neighbors; k++) {
-                int viz_restante = atoi(node->neighbors[k].id);
+                int viz_restante;
+                if (!parse_node_id(node->neighbors[k].id, &viz_restante)) {
+                    continue;
+                }
                 enviar_mensagem_tcp(node->neighbors[k].fd, msg_coord);
                 
                 // Assinala que ficamos à espera da resposta (UNCOORD) deste vizinho
@@ -192,10 +216,17 @@ void process_Coord(NodeState *node, char *buffer, int vizinho_index) {
  * ------------------------------------------------------------------------- */
 void process_Uncoord(NodeState *node, char *buffer, int vizinho_index) {
     char dest_str[4];
+    if (vizinho_index < 0 || vizinho_index >= node->num_neighbors) {
+        return;
+    }
     
-    if (sscanf(buffer, "UNCOORD %s", dest_str) == 1) {
-        int dest = atoi(dest_str);
-        int j = atoi(node->neighbors[vizinho_index].id);
+    int dest;
+    if (sscanf(buffer, "UNCOORD %3s", dest_str) == 1 &&
+        parse_node_id(dest_str, &dest)) {
+        int j;
+        if (!parse_node_id(node->neighbors[vizinho_index].id, &j)) {
+            return;
+        }
 
         
         // Se estamos congelados (Estado 1), registamos que este vizinho já nos deu luz verde
@@ -228,12 +259,18 @@ void process_Uncoord(NodeState *node, char *buffer, int vizinho_index) {
  * Retorno: void
  * ------------------------------------------------------------------------- */
 void verificar_fim_coordenacao(NodeState *node, int dest) {
+    if (dest < 0 || dest >= MAX_NODES) {
+        return;
+    }
     // Se não estamos em coordenação para este destino, não fazemos nada
     if (node->routing_table.state[dest] != 1) return;
 
     // Verifica se algum vizinho ainda conectado NÃO respondeu (coord == 1)
     for (int k = 0; k < node->num_neighbors; k++) {
-        int viz_id = atoi(node->neighbors[k].id);
+        int viz_id;
+        if (!parse_node_id(node->neighbors[k].id, &viz_id)) {
+            continue;
+        }
         if (node->routing_table.coord[dest][viz_id] == 1) {
             return; // Ainda estamos à espera. A nave continua congelada.
         }
@@ -250,7 +287,10 @@ void verificar_fim_coordenacao(NodeState *node, int dest) {
         char msg_route[64];
         snprintf(msg_route, sizeof(msg_route), "ROUTE %02d %d\n", dest, node->routing_table.dist[dest]);
         for (int i = 0; i < node->num_neighbors; i++) {
-            int viz_id = atoi(node->neighbors[i].id);
+            int viz_id;
+            if (!parse_node_id(node->neighbors[i].id, &viz_id)) {
+                continue;
+            }
             if (viz_id != node->routing_table.succ[dest]) {
                 enviar_mensagem_tcp(node->neighbors[i].fd, msg_route);
             
@@ -267,7 +307,9 @@ void verificar_fim_coordenacao(NodeState *node, int dest) {
         snprintf(msg_exped, sizeof(msg_exped), "UNCOORD %02d\n", dest);
         
         for (int i = 0; i < node->num_neighbors; i++) {
-            if (atoi(node->neighbors[i].id) == node->routing_table.succ_coord[dest]) {
+            int neighbor_id;
+            if (parse_node_id(node->neighbors[i].id, &neighbor_id) &&
+                neighbor_id == node->routing_table.succ_coord[dest]) {
                 enviar_mensagem_tcp(node->neighbors[i].fd, msg_exped);
                 if (node->monitor == 1) {
                     printf("[Monitor] Mensagem enviada para %s: %s", node->neighbors[i].id, msg_exped); 

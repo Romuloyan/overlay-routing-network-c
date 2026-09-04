@@ -12,8 +12,12 @@
  * Retorno: void
  * ------------------------------------------------------------------------- */
 void nodes_querry(NodeState *node, char *net_to_check) {
+    if (!parse_network_id(net_to_check)) {
+        printf("[Erro] A rede deve ter exatamente 3 dígitos.\n");
+        return;
+    }
     char message[128];
-    node->last_udp_tid = gerar_tid(node, 0);
+    node->last_udp_tid = gerar_tid();
     snprintf(message, sizeof(message), "NODES %03d 0 %s\n", node->last_udp_tid, net_to_check);
     enviar_mensagem_udp(node->net.udp_fd, node->net.udp_res, message);
 }
@@ -27,15 +31,15 @@ void nodes_querry(NodeState *node, char *net_to_check) {
  * ------------------------------------------------------------------------- */
 void join(NodeState *node) {
     char message[128];
-    node->last_udp_tid = gerar_tid(node, 0);
+    node->last_udp_tid = gerar_tid();
 
 
     if(node->last_udp_tid == -1) {
         printf("[Erro] Não foi possível gerar um TID válido para o registo.\n");
         return;
     }
-    if(strlen(node->self.id) == 0 || strlen(node->self.net) == 0) {
-        printf("[Erro] ID ou rede não especificados. Use 'join <id> <net>'.\n");
+    if (!parse_node_id(node->self.id, NULL) || !parse_network_id(node->self.net)) {
+        printf("[Erro] ID ou rede não especificados. Use 'join <net> <id>'.\n");
         return;
     }
     if(strlen(node->self.ip) == 0 || strlen(node->self.port) == 0) {
@@ -79,7 +83,11 @@ void direct_join(NodeState *node) {
     node->is_registered = 2; 
     
     // 3. Ponto de Ignição do Encaminhamento
-    int my_id_int = atoi(node->self.id);
+    int my_id_int;
+    if (!parse_node_id(node->self.id, &my_id_int)) {
+        printf("[Erro] ID do nó inválido.\n");
+        return;
+    }
     node->routing_table.dist[my_id_int] = 0;
     node->routing_table.succ[my_id_int] = my_id_int;
     node->routing_table.state[my_id_int] = 0; // Garante o estado de expedição
@@ -106,15 +114,22 @@ void direct_add_edge(NodeState *node, char *id_vizinho, char *ip_vizinho, char *
     }
     
     // --- VERIFICAÇÃO EXTRA DE SEGURANÇA (ID) ---
-    if (strlen(id_vizinho) != 2) {
+    if (!parse_node_id(id_vizinho, NULL)) {
         printf("[Erro] O ID do vizinho deve ter exatamente 2 dígitos.\n");
+        return;
+    }
+    if (strlen(ip_vizinho) >= sizeof(node->neighbors[0].ip) ||
+        strlen(port_vizinho) >= sizeof(node->neighbors[0].port)) {
+        printf("[Erro] IP ou porto do vizinho demasiado longo.\n");
         return;
     }
 
     int sock_fd;
     struct addrinfo *res;
 
-    configurar_conexao_tcp_cliente(ip_vizinho, port_vizinho, &sock_fd, &res);
+    if (configurar_conexao_tcp_cliente(ip_vizinho, port_vizinho, &sock_fd, &res) != 0) {
+        return;
+    }
     
 
     struct timeval timeout;
@@ -132,9 +147,9 @@ void direct_add_edge(NodeState *node, char *id_vizinho, char *ip_vizinho, char *
     
     // 2. Ligação bem sucedida! Guardamos os dados do vizinho
     int index = node->num_neighbors;
-    strcpy(node->neighbors[index].id, id_vizinho);
-    strcpy(node->neighbors[index].ip, ip_vizinho);
-    strcpy(node->neighbors[index].port, port_vizinho);
+    snprintf(node->neighbors[index].id, sizeof(node->neighbors[index].id), "%s", id_vizinho);
+    snprintf(node->neighbors[index].ip, sizeof(node->neighbors[index].ip), "%s", ip_vizinho);
+    snprintf(node->neighbors[index].port, sizeof(node->neighbors[index].port), "%s", port_vizinho);
     node->neighbors[index].fd = sock_fd;
     node->num_neighbors++;
 
@@ -167,7 +182,7 @@ void leave(NodeState *node) {
     }
     if (node->is_registered == 1) {
         char message[128];
-        node->last_udp_tid = gerar_tid(node, 0);
+        node->last_udp_tid = gerar_tid();
         snprintf(message, sizeof(message), "REG %03d 3 %s %s\n",
                  node->last_udp_tid, node->self.net, node->self.id);
         enviar_mensagem_udp(node->net.udp_fd, node->net.udp_res, message);
@@ -193,13 +208,13 @@ void leave(NodeState *node) {
  * ------------------------------------------------------------------------- */
 void help() {
     printf("\n--- MANUAIS DE VOO (COMANDOS) ---\n");
-    printf("  join <id> <net> (j)  - Regista o nó na rede\n");
-    printf("  direct join (dj)     - Regista o nó sem falar com o servidor (modo stealth)\n");
+    printf("  join <net> <id> (j)  - Regista o nó na rede\n");
+    printf("  direct join <net> <id> (dj) - Ativa o nó sem falar com o servidor\n");
     printf("  nodes <net> (n)     - Lista nós de uma rede\n");
     printf("  leave (l)            - Desregista o nó da rede\n");
     printf("  show nodes <net> (n) - Lista nós de uma rede\n");
     printf("  add edge <id> (ae)   - Conecta a um vizinho\n");
-    printf("  remove edge <id> (r) - Desconecta de um vizinho\n");
+    printf("  remove edge <id> (re) - Desconecta de um vizinho\n");
     printf("  show neighbors (sg)  - Mostra a tabela de ligações\n");
     printf("  help (h)             - Mostra este menu\n");
     printf("  exit (x)             - Desliga a nave\n");
@@ -217,11 +232,12 @@ void help() {
  * Retorno: 1 se processada com sucesso, 0 caso contrário.
  * ------------------------------------------------------------------------- */
 int tratar_mensagem_udp(char *buffer, NodeState *node) {
-    char type[16];
+    char type[16] = "";
     int rcv_tid, rcv_op;
-    char net[4];
+    char net[4] = "";
     // Extração básica: Tipo, TID e OP (presentes em todas as mensagens v2)
-    if (sscanf(buffer, "%s %d %d %s", type, &rcv_tid, &rcv_op, net) < 3) {
+    int header_fields = sscanf(buffer, "%15s %d %d %3s", type, &rcv_tid, &rcv_op, net);
+    if (header_fields < 3) {
         printf("[Erro] Mensagem mal formatada: %s\n", buffer);
         return 0;
     }
@@ -249,11 +265,19 @@ int tratar_mensagem_udp(char *buffer, NodeState *node) {
         else printf("-> Código REG desconhecido: %d\n", rcv_op);
     } 
     else if (strcmp(type, "NODES") == 0) {
+        if (header_fields < 4 || !parse_network_id(net)) {
+            printf("[Erro] Resposta NODES mal formatada: %s\n", buffer);
+            return 0;
+        }
         // op=1 é a lista de IDs 
         if (rcv_op == 1) printf("-> Nós na rede %s: %s\n", net, buffer + strlen(type) + strlen(net) + 1);
         else if (rcv_op == 2) printf("-> Erro: Rede %s não encontrada.\n", net);
     }
     else if (strcmp(type, "CONTACT") == 0) {
+        if (header_fields < 4 || !parse_network_id(net)) {
+            printf("[Erro] Resposta CONTACT mal formatada: %s\n", buffer);
+            return 0;
+        }
         
         
         if (rcv_op == 1){
@@ -261,15 +285,16 @@ int tratar_mensagem_udp(char *buffer, NodeState *node) {
             char rcv_id[4], rcv_ip[32], rcv_port[8];
         
             // 1. Extraímos os dados para variáveis locais em vez de escrever logo na tabela
-            if (sscanf(buffer, "%*s %*d %*d %*s %s %s %s", rcv_id, rcv_ip, rcv_port) == 3) {
+            if (sscanf(buffer, "%*s %*d %*d %*s %3s %31s %7s", rcv_id, rcv_ip, rcv_port) == 3 &&
+                parse_node_id(rcv_id, NULL)) {
                 
                 int ja_existe = 0;
                 // 2. Verificamos se este ID já existe na tabela (foi um vizinho que se ligou a nós)
                 for (int i = 0; i < node->num_neighbors; i++) {
                     if (strcmp(node->neighbors[i].id, rcv_id) == 0) {
                         // Se já existe, apenas atualizamos o IP e Porto oficiais vindos do servidor
-                        strcpy(node->neighbors[i].ip, rcv_ip);
-                        strcpy(node->neighbors[i].port, rcv_port);
+                        snprintf(node->neighbors[i].ip, sizeof(node->neighbors[i].ip), "%s", rcv_ip);
+                        snprintf(node->neighbors[i].port, sizeof(node->neighbors[i].port), "%s", rcv_port);
                         //printf("-> Porto oficial do vizinho %s atualizado para: %s\n", rcv_id, rcv_port);
                         ja_existe = 1;
                         break;
@@ -279,9 +304,9 @@ int tratar_mensagem_udp(char *buffer, NodeState *node) {
                         if(node->num_neighbors < MAX_NEIGHBORS) {
                     
                         Neighbor *proximo_vizinho = &node->neighbors[node->num_neighbors];
-                        strcpy(proximo_vizinho->id, rcv_id);
-                        strcpy(proximo_vizinho->ip, rcv_ip);
-                        strcpy(proximo_vizinho->port, rcv_port);
+                        snprintf(proximo_vizinho->id, sizeof(proximo_vizinho->id), "%s", rcv_id);
+                        snprintf(proximo_vizinho->ip, sizeof(proximo_vizinho->ip), "%s", rcv_ip);
+                        snprintf(proximo_vizinho->port, sizeof(proximo_vizinho->port), "%s", rcv_port);
                     printf("-> Contacto recebido: Nó %s está em %s:%s\n", proximo_vizinho->id, proximo_vizinho->ip, proximo_vizinho->port);
                     if(neighbor_edge_create(node)==1){
                         node->num_neighbors++; // Incrementa o número de vizinhos na tabela
@@ -347,6 +372,10 @@ void add_edge(NodeState *node, const char *id) {
         return;
     }
     
+    if (!parse_node_id(id, NULL)) {
+        printf("[Erro] O ID do vizinho deve ter exatamente 2 dígitos.\n");
+        return;
+    }
     if(strcmp(id, node->self.id) == 0) {
         printf("[Aviso] Não é possível adicionar o próprio nó como vizinho.\n");
         return;
@@ -358,9 +387,9 @@ void add_edge(NodeState *node, const char *id) {
         }
     }
     char message[128];
-    node->last_udp_tid = gerar_tid(node, 0);
+    node->last_udp_tid = gerar_tid();
     /*Pedido de informação sobre o vizinho*/
-    sprintf(message, "CONTACT %03d 0 %s %s\n", 
+    snprintf(message, sizeof(message), "CONTACT %03d 0 %s %s\n", 
              node->last_udp_tid, node->self.net, id);
     enviar_mensagem_udp(node->net.udp_fd, node->net.udp_res, message);
 
@@ -375,12 +404,15 @@ void add_edge(NodeState *node, const char *id) {
 void remover_vizinho(NodeState *node, char *id_alvo) {
     int i, j;
     int encontrado = 0;
+    int id_valido = parse_node_id(id_alvo, NULL);
 
     for (i = 0; i < node->num_neighbors; i++) {
         if (strcmp(node->neighbors[i].id, id_alvo) == 0) {
             // 1. Fechar o socket TCP
             // ---> LIGAÇÃO 1: Acionar o alarme ANTES de apagar o socket! <---
-            coordenation_sender(node, NULL, i); // Envia o alarme de coordenação para os vizinhos restantes antes de fechar a conexão
+            if (id_valido) {
+                coordenation_sender(node, i); // Envia o alarme de coordenação para os vizinhos restantes antes de fechar a conexão
+            }
 
             // 1. Fechar o socket TCP
             close(node->neighbors[i].fd);
@@ -414,7 +446,11 @@ void remover_vizinho(NodeState *node, char *id_alvo) {
  * ------------------------------------------------------------------------- */
 void announce(NodeState *node) {
     char message[128];
-    int my_id_int = atoi(node->self.id);
+    int my_id_int;
+    if (!parse_node_id(node->self.id, &my_id_int)) {
+        printf("[Erro] ID do nó inválido.\n");
+        return;
+    }
     node->routing_table.dist[my_id_int] = 0;
     node->routing_table.succ[my_id_int] = my_id_int; // We are our own successor
     for(int i=0; i<node->num_neighbors; i++){
@@ -434,10 +470,10 @@ void announce(NodeState *node) {
  * Descrição: Exibe o estado do encaminhamento para um destino específico.
  * ------------------------------------------------------------------------- */
 void show_routing_table(NodeState *node, char *dest_str) {
-    int dest = atoi(dest_str);
+    int dest;
 
     // Proteção contra IDs fora do limite
-    if (dest < 0 || dest > 99) {
+    if (!parse_node_id(dest_str, &dest)) {
         printf("[Erro] Destino inválido. O ID deve estar entre 00 e 99.\n");
         return;
     }
@@ -478,7 +514,11 @@ void show_routing_table(NodeState *node, char *dest_str) {
  * tentar o envio.
  * ------------------------------------------------------------------------- */
 void enviar_chat(NodeState *node, char *dest_str, char *msg_texto) {
-    int dest_int = atoi(dest_str);
+    int dest_int;
+    if (!parse_node_id(dest_str, &dest_int)) {
+        printf("[Erro] Destino inválido. O ID deve estar entre 00 e 99.\n");
+        return;
+    }
     int succ_id = node->routing_table.succ[dest_int];
 
     if (succ_id != -1 && node->routing_table.state[dest_int] == 0) {
@@ -487,7 +527,8 @@ void enviar_chat(NodeState *node, char *dest_str, char *msg_texto) {
 
         int enviou = 0;
         for (int i = 0; i < node->num_neighbors; i++) {
-            if (atoi(node->neighbors[i].id) == succ_id) {
+            int neighbor_id;
+            if (parse_node_id(node->neighbors[i].id, &neighbor_id) && neighbor_id == succ_id) {
                 enviar_mensagem_tcp(node->neighbors[i].fd, pacote);
                 printf("-> Mensagem enviada para %s via vizinho %02d.\n", dest_str, succ_id);
                 enviou = 1;

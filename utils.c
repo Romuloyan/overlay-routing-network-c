@@ -1,5 +1,36 @@
 #include "utils.h"
 
+int parse_node_id(const char *text, int *node_id) {
+    if (text == NULL || strlen(text) != 2 ||
+        !isdigit((unsigned char)text[0]) ||
+        !isdigit((unsigned char)text[1])) {
+        return 0;
+    }
+
+    int value = (text[0] - '0') * 10 + (text[1] - '0');
+    if (value < 0 || value >= MAX_NODES) {
+        return 0;
+    }
+
+    if (node_id != NULL) {
+        *node_id = value;
+    }
+    return 1;
+}
+
+int parse_network_id(const char *text) {
+    if (text == NULL || strlen(text) != 3) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < 3; i++) {
+        if (!isdigit((unsigned char)text[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 /* -------------------------------------------------------------------------
  * FUNÇÃO: processar_argumentos
  * Descrição: Faz o parsing dos argumentos da linha de comandos (IP e Porto)
@@ -23,8 +54,11 @@ void processar_argumentos(int argc, char *argv[], NodeState *node, RegServerInfo
     if (argc >= 5) regInfo->regPort = argv[4]; 
 
 
-    strncpy(node->self.ip, argv[1], sizeof(node->self.ip) - 1); 
-    strncpy(node->self.port, argv[2], sizeof(node->self.port) - 1);
+    if (snprintf(node->self.ip, sizeof(node->self.ip), "%s", argv[1]) >= (int)sizeof(node->self.ip) ||
+        snprintf(node->self.port, sizeof(node->self.port), "%s", argv[2]) >= (int)sizeof(node->self.port)) {
+        fprintf(stderr, "IP ou porto TCP demasiado longo.\n");
+        exit(1);
+    }
     
     // Garantir que o ID começa vazio até ao 'join'
     node->self.id[0] = '\0'; 
@@ -39,13 +73,16 @@ void processar_argumentos(int argc, char *argv[], NodeState *node, RegServerInfo
  * - regInfo: Estrutura com IP/Porto do servidor de registo.
  * Retorno: 1 se o utilizador desejar sair (comando exit), 0 caso contrário.
  * ------------------------------------------------------------------------- */
-int teclado( NodeState *node, RegServerInfo regInfo) {
+int teclado(NodeState *node) {
             char buffer[128];// Buffer para ler a linha de comando do utilizador
             
             if(fgets(buffer, sizeof(buffer), stdin) != NULL){ // Lê uma linha de comando do utilizador
                 char cmd[16], id_temp[128];// Buffer para extrair o comando da linha de entrada
                 char net_temp[128]; // Buffer para extrair o ID temporário da linha de entrada tinha 4 mas aumentei para 16 por causa do show nodes, onde isto armazena o nodes, para acomodar melhor o nome da rede
                 int n = sscanf(buffer, "%15s %127s %127s", cmd, net_temp, id_temp); // Extrai o comando e o ID (se fornecido) da linha de entrada
+                if (n < 1) {
+                    return 0;
+                }
                 
                 
     /* --- COMANDO: JOIN --- */
@@ -58,12 +95,14 @@ int teclado( NodeState *node, RegServerInfo regInfo) {
             }
             else {
                 
-                if (strlen(net_temp) != 3 || strlen(id_temp) != 2) {
+                if (!parse_network_id(net_temp) || !parse_node_id(id_temp, NULL)) {
                     printf("[Erro] Formato inválido. A rede deve ter 3 dígitos (ex: 042) e o ID 2 dígitos (ex: 01).\n");
                 }
                 else {
-                    strcpy(node->self.id, id_temp); // Capturamos o ID
-                    strcpy(node->self.net, net_temp); // Capturamos a rede
+                    memcpy(node->self.id, id_temp, 3);
+                    node->self.id[2] = '\0';
+                    memcpy(node->self.net, net_temp, 4);
+                    node->self.net[3] = '\0';
                     join(node);
                 }
             }
@@ -76,14 +115,21 @@ int teclado( NodeState *node, RegServerInfo regInfo) {
     }
     /* --- COMANDO: SHOW NODES --- */
                 else if(((strcmp(cmd, "show")  ==0) && ( strcmp(net_temp,"nodes") == 0)) || (strcmp(cmd, "n"))==0){
+                    const char *network = NULL;
                     if (n == 2 && strcmp(cmd, "n") == 0) {
-                        // Usamos o net_temp que o sscanf já capturou!
-                        nodes_querry(node, net_temp); 
+                        network = net_temp;
                     }else if(n == 3 && strcmp(cmd, "show") == 0){
-                        nodes_querry(node, id_temp);
+                        network = id_temp;
                     } 
                     else {
                         printf("Erro: Uso correto: nodes <net>\n");
+                    }
+                    if (network != NULL) {
+                        if (parse_network_id(network)) {
+                            nodes_querry(node, (char *)network);
+                        } else {
+                            printf("[Erro] A rede deve ter exatamente 3 dígitos.\n");
+                        }
                     }
                 }
     /* --- COMANDO: LEAVE --- */
@@ -176,27 +222,29 @@ int teclado( NodeState *node, RegServerInfo regInfo) {
                 }
     /* --- COMANDO: DIRECT JOIN --- */
                 else if ((strcmp(cmd, "direct") == 0 && strcmp(net_temp, "join") == 0) || strcmp(cmd, "dj") == 0) {
-                    char arg_net[16], arg_id[4];
+                    char arg_net[4], arg_id[4];
                     int lido;
                     
                     // Extrai os argumentos consoante o formato usado (curto ou longo)
                     if (strcmp(cmd, "dj") == 0) {
-                        lido = sscanf(buffer, "%*s %15s %3s", arg_net, arg_id);
+                        lido = sscanf(buffer, "%*s %3s %3s", arg_net, arg_id);
                     } else {
-                        lido = sscanf(buffer, "%*s %*s %15s %3s", arg_net, arg_id);
+                        lido = sscanf(buffer, "%*s %*s %3s %3s", arg_net, arg_id);
                     }
                     if (lido == 2) {
                         if(node->is_registered) {
                             printf("[Aviso] A nave já está ativa. Use 'leave' antes de mudar de identidade.\n");
                         } 
                         
-                        else if (strlen(arg_net) != 3 || strlen(arg_id) != 2) {
+                        else if (!parse_network_id(arg_net) || !parse_node_id(arg_id, NULL)) {
                             printf("[Erro] Formato inválido. A rede deve ter 3 dígitos e o ID 2 dígitos.\n");
                         }
                         
                         else {
-                            strcpy(node->self.id, arg_id);
-                            strcpy(node->self.net, arg_net);
+                            memcpy(node->self.id, arg_id, 3);
+                            node->self.id[2] = '\0';
+                            memcpy(node->self.net, arg_net, 4);
+                            node->self.net[3] = '\0';
                             direct_join(node); 
                         }
                     } else {
@@ -216,7 +264,11 @@ int teclado( NodeState *node, RegServerInfo regInfo) {
                     }
                     
                     if (lido == 3) {
-                        direct_add_edge(node, arg_id, arg_ip, arg_port);
+                        if (parse_node_id(arg_id, NULL)) {
+                            direct_add_edge(node, arg_id, arg_ip, arg_port);
+                        } else {
+                            printf("[Erro] O ID do vizinho deve ter exatamente 2 dígitos.\n");
+                        }
                     } else {
                         printf("[Erro] Uso correto: dae <id> <IP> <TCP> ou direct add edge <id> <IP> <TCP>\n");
                     }
@@ -226,9 +278,10 @@ int teclado( NodeState *node, RegServerInfo regInfo) {
                     char dest_str[4];
                     char msg_texto[128] = "";
                     
-                    if (sscanf(buffer, "%*s %s %[^\n]", dest_str, msg_texto) == 2) {
+                    int dest_int;
+                    if (sscanf(buffer, "%*s %3s %127[^\n]", dest_str, msg_texto) == 2 &&
+                        parse_node_id(dest_str, &dest_int)) {
                         
-                        int dest_int = atoi(dest_str);
                         int succ_id = node->routing_table.succ[dest_int];
 
                         if (succ_id != -1 && node->routing_table.state[dest_int] == 0) {
@@ -239,7 +292,8 @@ int teclado( NodeState *node, RegServerInfo regInfo) {
 
                             int enviou = 0;
                             for (int i = 0; i < node->num_neighbors; i++) {
-                                if (atoi(node->neighbors[i].id) == succ_id) {
+                                int neighbor_id;
+                                if (parse_node_id(node->neighbors[i].id, &neighbor_id) && neighbor_id == succ_id) {
                                     enviar_mensagem_tcp(node->neighbors[i].fd, pacote);
                                     printf("-> Mensagem enviada para %s via vizinho %02d.\n", dest_str, succ_id);
                                     enviou = 1;
@@ -306,7 +360,8 @@ void exibir_prompt(NodeState *node) {
  * Retorno: O número de bytes lidos ou -1 em caso de erro.
  * ------------------------------------------------------------------------- */
 ssize_t ler_linha_tcp(int fd, char *buffer, size_t max_len) {
-    ssize_t n, total = 0;
+    ssize_t n;
+    size_t total = 0;
     char c;
 
     while (total < max_len - 1) {
@@ -321,7 +376,7 @@ ssize_t ler_linha_tcp(int fd, char *buffer, size_t max_len) {
         }
     }
     buffer[total] = '\0';
-    return total;
+    return (ssize_t)total;
 }
 /* -------------------------------------------------------------------------
  * FUNÇÃO: processar_dados_vizinho
@@ -356,12 +411,12 @@ void processar_dados_vizinho(NodeState *node, int index) {
     char id_orig[4], id_dest[4], msg[128];
     
     // Identificar o comando recebido
-    if (sscanf(buffer, "NEIGHBOR %s", id_orig) == 1 && strnlen(id_orig, sizeof(id_orig)) == 2 ){
+    if (sscanf(buffer, "NEIGHBOR %3s", id_orig) == 1 && parse_node_id(id_orig, NULL)) {
         
         strncpy(node->neighbors[index].id, id_orig, sizeof(node->neighbors[index].id) - 1);
         node->neighbors[index].id[sizeof(node->neighbors[index].id) - 1] = '\0'; 
        
-        node->last_udp_tid = gerar_tid(node, 0);
+        node->last_udp_tid = gerar_tid();
         char message[128];
         snprintf(message, sizeof(message), "CONTACT %03d 0 %s %s\n", 
          node->last_udp_tid, node->self.net, id_orig);
@@ -369,28 +424,36 @@ void processar_dados_vizinho(NodeState *node, int index) {
         
         partilhar_tabela_com_vizinho(node, node->neighbors[index].fd);
     }
-   else if (strncmp(buffer, "ROUTE", 5) == 0) {
+   else if (strncmp(buffer, "ROUTE ", 6) == 0) {
         int dist_route;
-        if (sscanf(buffer, "ROUTE %s %d", id_orig, &dist_route) == 2) {
+        if (sscanf(buffer, "ROUTE %3s %d", id_orig, &dist_route) == 2 &&
+            parse_node_id(id_orig, NULL) && dist_route >= 0 && dist_route <= INF) {
            
             processar_Route(node, buffer, index); // Passa o index, não o fd!
+        } else {
+            printf("[Erro] Mensagem ROUTE mal formatada: %s\n", buffer);
         }
     }
     // ---> Intercetar COORD <---
-    else if (strncmp(buffer, "COORD", 5) == 0) {
+    else if (strncmp(buffer, "COORD ", 6) == 0) {
         process_Coord(node, buffer, index);
     }
     // ---> Intercetar UNCOORD <---
-    else if (strncmp(buffer, "UNCOORD", 7) == 0) {
+    else if (strncmp(buffer, "UNCOORD ", 8) == 0) {
         process_Uncoord(node, buffer, index);
     }
-    else if (sscanf(buffer, "CHAT %s %s %[^\n]", id_orig, id_dest, msg) == 3) {
+    else if (sscanf(buffer, "CHAT %3s %3s %127[^\n]", id_orig, id_dest, msg) == 3 &&
+             parse_node_id(id_orig, NULL)) {
         // Se a mensagem é para nós
         if (strcmp(id_dest, node->self.id) == 0) {
             printf("\n[CHAT] Mensagem de %s: %s\n", id_orig, msg);
         } else {
-            // Guardamos logo os valores para não repetir atoi()
-            int dest_int = atoi(id_dest);
+            // Validamos o destino antes de consultar a tabela de encaminhamento.
+            int dest_int;
+            if (!parse_node_id(id_dest, &dest_int)) {
+                printf("[Erro] Destino de CHAT inválido: %s\n", id_dest);
+                return;
+            }
             int succ_id = node->routing_table.succ[dest_int];
 
             // Verifica se a rota existe e não está congelada
@@ -399,7 +462,8 @@ void processar_dados_vizinho(NodeState *node, int index) {
                        id_orig, id_dest, succ_id);
                 
                 for (int i = 0; i < node->num_neighbors; i++) {
-                    if (atoi(node->neighbors[i].id) == succ_id) {
+                    int neighbor_id;
+                    if (parse_node_id(node->neighbors[i].id, &neighbor_id) && neighbor_id == succ_id) {
                         // Reenvia o pacote original diretamente
                         enviar_mensagem_tcp(node->neighbors[i].fd, buffer); 
                         break;
@@ -429,7 +493,7 @@ void init_routing_table(NodeState *node, int num_nodes) {
         node->routing_table.succ[i] = -1; // Sucessor desconhecido
         node->routing_table.state[i] = 0; // Estado inicial (0 = desconhecido)
         node->routing_table.succ_coord[i] = -1; // Coordenada do sucessor desconhecida
-        for(int j=0; j<MAX_NEIGHBORS; j++){
+        for(int j=0; j<MAX_NODES; j++){
             node->routing_table.coord[i][j] = 0; // Coordenadas dos vizinhos desconhecidas
         }
     }
@@ -472,12 +536,6 @@ void partilhar_tabela_com_vizinho(NodeState *node, int fd_vizinho) {
  * - N: Parâmetro auxiliar.
  * Retorno: O valor inteiro do TID gerado.
  * ------------------------------------------------------------------------- */
-int gerar_tid(NodeState *node, int N) {
-    char tid_str[8];
-    snprintf(tid_str, sizeof(tid_str), "%03d", rand() % 1000);
-    return atoi(tid_str); 
-  
+int gerar_tid(void) {
+    return rand() % 1000;
 }
-
-
-

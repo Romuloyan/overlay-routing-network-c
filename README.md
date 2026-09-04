@@ -2,7 +2,7 @@
 
 Academic networking project implementing a command-line overlay node in C. Each process can register in an overlay, establish TCP neighbour connections, exchange routing information and react to topology changes.
 
-> This is a portfolio version of a two-person academic project. It preserves the original source code; course handouts, self-evaluation material and participant data are deliberately not included.
+> This is a portfolio version of a two-person academic project. Course handouts, self-evaluation material and participant data are deliberately not included.
 
 ## What it demonstrates
 
@@ -23,7 +23,8 @@ run the executable directly with the node IP and TCP port.
 make
 ```
 
-The supplied Makefile builds the executable `OWR` with `-Wall` enabled.
+The supplied Makefile builds the executable `OWR` with `-Wall`, `-Wextra` and
+`-Wpedantic` enabled.
 
 ## Run
 
@@ -59,6 +60,6 @@ The multi-node and registration-service scenarios are not claimed as part of thi
 
 ## Academic provenance and contribution
 
-Developed for the **Redes de Computadores e Internet** course at Instituto Superior Técnico (2025/2026), as a two-person project. Rómulo Situ Antunes Yan contributed across the implementation and integration of the C program, including the networking, command and routing work. The original team source is retained; it is not presented as a solo project.
+Developed for the **Redes de Computadores e Internet** course at Instituto Superior Técnico (2025/2026), as a two-person project. Rómulo Situ Antunes Yan contributed across the implementation and integration of the C program, including the networking, command and routing work. It is not presented as a solo project.
 
 See [docs/ATTRIBUTION.md](docs/ATTRIBUTION.md) for the portfolio publication notes.

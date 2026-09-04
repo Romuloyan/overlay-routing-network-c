@@ -1,10 +1,10 @@
 CC = gcc
-CFLAGS = -Wall -g
+CFLAGS = -Wall -Wextra -Wpedantic -g
 SRCS = $(wildcard *.c)
 DEPS = $(wildcard *.h)
 OBJ = $(SRCS:.c=.o)
 TARGET = OWR
-IP := $(shell hostname -I | awk '{print $$1}')
+IP ?= $(shell hostname -I 2>/dev/null | awk '{print $$1}')
 
 all: $(TARGET)
 
@@ -32,5 +32,5 @@ val: $(TARGET)
 clean:
 	rm -f *.o $(TARGET)
 
-.PHONY: all clean
+.PHONY: all clean run val
 
