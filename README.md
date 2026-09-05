@@ -2,7 +2,7 @@
 
 Academic networking project implementing a command-line overlay node in C. Each process can register in an overlay, establish TCP neighbour connections, exchange routing information and react to topology changes.
 
-> This is a portfolio version of a two-person academic project. Course handouts, self-evaluation material and participant data are deliberately not included.
+> This is a portfolio version of a academic project. Course handouts, self-evaluation material and participant data are deliberately not included.
 
 ## What it demonstrates
 
